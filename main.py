@@ -1,87 +1,73 @@
-import discord
-import requests
-import asyncio
-import os
+import discord, os
+from discord.ext import commands
 
 intents = discord.Intents.default()
 intents.message_content = True
-Token = os.environ['Token']
-client = discord.Client(intents=intents)
+intents.reactions = True
+bot = commands.Bot(command_prefix='!', intents=intents)
 
+board = [':white_large_square:'] * 9
+current_player = 'X'
 game_in_progress = False
-word_to_guess = ""
-guessed_letters = set()
-attempts_left = 6
+game_message = None
 
-def get_random_word():
-    response = requests.get("https://random-word-api.herokuapp.com/word?number=1&length=5")
-    if response.status_code == 200:
-        return response.json()[0]
-    else:
-        return "apple"
+NUMBER_EMOJIS = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣']
 
-def display_word():
-    return ' '.join(letter if letter in guessed_letters else '_' for letter in word_to_guess)
-
-def display_hangman():
-    stages = [
-        "  +---+\n  |   |\n      |\n      |\n      |\n      |\n=========",
-        "  +---+\n  |   |\n  O   |\n      |\n      |\n      |\n=========",
-        "  +---+\n  |   |\n  O   |\n  |   |\n      |\n      |\n=========",
-        "  +---+\n  |   |\n  O   |\n /|   |\n      |\n      |\n=========",
-        "  +---+\n  |   |\n  O   |\n /|\\  |\n      |\n      |\n=========",
-        "  +---+\n  |   |\n  O   |\n /|\\  |\n /    |\n      |\n=========",
-        "  +---+\n  |   |\n  O   |\n /|\\  |\n / \\  |\n      |\n========="
-    ]
-    return stages[6 - attempts_left]
-
-def format_game_state():
-    hangman = display_hangman()
-    word = display_word()
-    guesses = ", ".join(sorted(guessed_letters)) or "None"
-    return f"```\n{hangman}\n\nWord: {word}\nGuessed letters: {guesses}\nAttempts left: {attempts_left}\n```"
-
-@client.event
+@bot.event
 async def on_ready():
-    print(f'We have logged in as {client.user}')
+    print(f'{bot.user} has connected to Discord!')
 
-@client.event
-async def on_message(message):
-    global game_in_progress, word_to_guess, guessed_letters, attempts_left
+@bot.command(name='tictactoe', help='Starts a new Tic Tac Toe game')
+async def tictactoe(ctx):
+    global board, current_player, game_in_progress, game_message
+    board = [':white_large_square:'] * 9
+    current_player = 'X'
+    game_in_progress = True
+    game_message = await ctx.send("Starting a new game of Tic Tac Toe!")
+    await display_board()
+    for emoji in NUMBER_EMOJIS:
+        await game_message.add_reaction(emoji)
 
-    if message.author == client.user:
+@bot.event
+async def on_reaction_add(reaction, user):
+    global board, current_player, game_in_progress, game_message
+    if user == bot.user or not game_in_progress or reaction.message.id != game_message.id:
         return
 
-    if message.content.startswith('!hangman'):
-        if game_in_progress:
-            await message.channel.send("A game is already in progress!")
+    if str(reaction.emoji) in NUMBER_EMOJIS:
+        position = NUMBER_EMOJIS.index(str(reaction.emoji))
+        if board[position] == ':white_large_square:':
+            board[position] = ':regional_indicator_x:' if current_player == 'X' else ':o2:'
+            await display_board()
+
+            if check_winner():
+                await reaction.message.channel.send(f"Player {current_player} wins!")
+                game_in_progress = False
+            elif ':white_large_square:' not in board:
+                await reaction.message.channel.send("It's a tie!")
+                game_in_progress = False
+            else:
+                current_player = 'O' if current_player == 'X' else 'X'
+                await reaction.message.channel.send(f"It's player {current_player}'s turn!")
         else:
-            game_in_progress = True
-            word_to_guess = get_random_word()
-            guessed_letters = set()
-            attempts_left = 6
-            await message.channel.send("Hangman game started! Guess the 5-letter word.")
-            await message.channel.send(format_game_state())
+            await reaction.message.channel.send("That position is already taken. Choose another.")
 
-    elif game_in_progress and len(message.content) == 1:
-        guess = message.content.lower()
-        if guess in guessed_letters:
-            await message.channel.send("You already guessed that letter!")
-        elif guess in word_to_guess:
-            guessed_letters.add(guess)
-            await message.channel.send("Correct guess!")
-        else:
-            guessed_letters.add(guess)
-            attempts_left -= 1
-            await message.channel.send("Wrong guess!")
+    await reaction.remove(user)
 
-        await message.channel.send(format_game_state())
+async def display_board():
+    global game_message
+    board_display = '\n'.join([' '.join(board[i:i+3]) for i in range(0, 9, 3)])
+    await game_message.edit(content=f"Current board:\n{board_display}")
 
-        if set(word_to_guess) <= guessed_letters:
-            await message.channel.send(f"Congratulations! You guessed the word: {word_to_guess}")
-            game_in_progress = False
-        elif attempts_left == 0:
-            await message.channel.send(f"Game over! The word was: {word_to_guess}")
-            game_in_progress = False
+def check_winner():
+    winning_combinations = [
+        [0, 1, 2], [3, 4, 5], [6, 7, 8],
+        [0, 3, 6], [1, 4, 7], [2, 5, 8],
+        [0, 4, 8], [2, 4, 6]
+    ]
+    for combo in winning_combinations:
+        if board[combo[0]] == board[combo[1]] == board[combo[2]] != ':white_large_square:':
+            return True
+    return False
 
-client.run(Token)
+bot.run(os.environ['Token'])
